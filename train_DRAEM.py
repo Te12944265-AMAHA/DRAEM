@@ -118,7 +118,8 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    obj_batch = [['capsule'],
+    obj_batch = [['fake_pplsgas'],
+                 ['capsule'],
                  ['bottle'],
                  ['carpet'],
                  ['leather'],
@@ -136,7 +137,8 @@ if __name__=="__main__":
                  ]
 
     if int(args.obj_id) == -1:
-        obj_list = ['capsule',
+        obj_list = [ 'fake_pplsgas',
+                     'capsule',
                      'bottle',
                      'carpet',
                      'leather',
