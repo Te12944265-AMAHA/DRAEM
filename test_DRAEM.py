@@ -6,10 +6,12 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score
 from model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 import os
+import cv2
+from PIL import Image
 
 def write_results_to_file(run_name, image_auc, pixel_auc, image_ap, pixel_ap):
-    if not os.path.exists('./outputs/'):
-        os.makedirs('./outputs/')
+    if not os.path.exists('./outputs/images'):
+        os.makedirs('./outputs/images')
 
     fin_str = "img_auc,"+run_name
     for i in image_auc:
@@ -36,13 +38,28 @@ def write_results_to_file(run_name, image_auc, pixel_auc, image_ap, pixel_ap):
     with open("./outputs/results.txt",'a+') as file:
         file.write(fin_str)
 
+def tensor2nparr(tensor):
+    """(C,H,W) to (H,W,C) and unormalize"""
+    np_arr = tensor.detach().cpu().numpy().transpose((1,2,0))
+    np_arr = np_arr.astype(np.float32)
+    np_arr = (np_arr * 255).clip(0, 255).astype(np.uint8)
+    #np_arr = (np_arr*255).astype(np.uint8)
+    if np_arr.shape[2] == 1:
+        np_arr = np.squeeze(np_arr, axis=2)
+    return np_arr
 
 def test(obj_names, mvtec_path, checkpoint_path, base_model_name):
+    img_path = './outputs/images'
+    if not os.path.exists(img_path):
+        os.makedirs(img_path)
     obj_ap_pixel_list = []
     obj_auroc_pixel_list = []
     obj_ap_image_list = []
     obj_auroc_image_list = []
     for obj_name in obj_names:
+        img_path_obj = os.path.join(img_path, obj_name)
+        if not os.path.exists(img_path_obj):
+            os.makedirs(img_path_obj)
         img_dim = 256
         run_name = base_model_name+"_"+obj_name+'_'
 
@@ -74,7 +91,8 @@ def test(obj_names, mvtec_path, checkpoint_path, base_model_name):
         cnt_display = 0
         display_indices = np.random.randint(len(dataloader), size=(16,))
 
-
+        good_cnt = 0
+        bad_cnt = 0
         for i_batch, sample_batched in enumerate(dataloader):
 
             gray_batch = sample_batched["image"].cuda()
@@ -98,7 +116,39 @@ def test(obj_names, mvtec_path, checkpoint_path, base_model_name):
                 display_out_masks[cnt_display] = t_mask[0]
                 display_in_masks[cnt_display] = true_mask[0]
                 cnt_display += 1
-
+            # save images
+            #print(is_normal)
+            is_good_str = "good" if is_normal == 0 else "bad"
+            cnt = good_cnt if is_good_str == "good" else bad_cnt
+            img_basename = f"{img_path_obj}/{is_good_str}_{cnt}"
+            #print(type(tensor2nparr(gray_batch[0])))
+            pil_true_image = Image.fromarray(tensor2nparr(gray_batch[0]))
+            pil_true_image.save(img_basename+'_true_image.jpg')
+            pil_pred_image = Image.fromarray(tensor2nparr(gray_rec[0]))
+            pil_pred_image.save(img_basename+'_pred_image.jpg')
+            t_mask = out_mask_sm[:, 1:, :, :]
+            #print(tensor2nparr(true_mask[0]).shape)
+            pil_true_mask = Image.fromarray(tensor2nparr(true_mask[0]))
+            pil_true_mask.save(img_basename+'_true_mask.jpg')
+            # normalize to 255 and do thresholding
+            max_anomaly_score = t_mask[0].max().item()
+            min_anomaly_score = t_mask[0].min().item()
+            t_mask_scaled = (t_mask[0] - min_anomaly_score) / (
+                max_anomaly_score - min_anomaly_score
+            )
+            pil_pred_mask = Image.fromarray(tensor2nparr(t_mask_scaled) > 225*0.3)
+            pil_pred_mask.save(img_basename+'_pred_mask.jpg')
+            # cv2.imwrite(img_basename+'_true_image.jpg', cv2.cvtColor(tensor2nparr(gray_batch[0]), cv2.COLOR_BGR2RGB))
+            # cv2.imwrite(img_basename+'_pred_image.jpg', cv2.cvtColor(tensor2nparr(gray_rec[0]), cv2.COLOR_BGR2RGB))
+            # t_mask = out_mask_sm[:, 1:, :, :]
+            # print(np.max(tensor2nparr(t_mask[0])))
+            # cv2.imwrite(img_basename+'_pred_mask.jpg', tensor2nparr(t_mask[0]))
+            # cv2.imwrite(img_basename+'_true_mask.jpg', tensor2nparr(true_mask[0]))
+            if is_good_str == "good":
+                good_cnt += 1
+            else:
+                bad_cnt += 1
+            #quit()
 
             out_mask_cv = out_mask_sm[0 ,1 ,: ,:].detach().cpu().numpy()
 
@@ -172,5 +222,6 @@ if __name__=="__main__":
                  'wood'
                  ]
 
+    obj_list = [obj_list[0]]
     with torch.cuda.device(args.gpu_id):
         test(obj_list,args.data_path, args.checkpoint_path, args.base_model_name)
